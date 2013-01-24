@@ -1,14 +1,14 @@
 -module(harbor_odbc_queries).
 -author("lkosak@gmail.com").
 
--export([get_user_auth_credentials/2]).
+-export([get_auth_token/2]).
 
 -include("ejabberd.hrl").
 
 
-get_user_auth_credentials(LServer, Username) ->
+get_auth_token(LServer, Username) ->
     ejabberd_odbc:sql_query(
       LServer,
-      ["select password_digest,auth_token from users "
+      ["select auth_token from users "
        "where username='", Username, "';"]).
 

@@ -24,8 +24,8 @@
    is_user_exists/2,
    remove_user/2,
    remove_user/3,
-   store_type/0,
-   plain_password_required/0
+   plain_password_required/0,
+   store_type/0
   ]).
 
 -include("ejabberd.hrl").
@@ -41,7 +41,7 @@ plain_password_required() ->
   false.
 
 store_type() ->
-  plain.
+  external.
 
 %% @spec (User, Server, Password) -> true | false | {error, Error}
 check_password(User, Server, Password) ->
@@ -52,16 +52,13 @@ check_password(User, Server, Password) ->
   LUser ->
       Username = ejabberd_odbc:escape(LUser),
       LServer = jlib:nameprep(Server),
-      PasswordDigest = password_digest(Password),
-      try harbor_odbc_queries:get_user_auth_credentials(LServer, Username) of
-    {selected, ["password_digest"], [{PasswordDigest}]} ->
-        PasswordDigest /= ""; %% Password is correct, and not empty
+      try harbor_odbc_queries:get_auth_token(LServer, Username) of
     {selected, ["auth_token"], [{Password}]} ->
-        Password /= ""; %% Password is correct, and not empty
-    {selected, ["password"], [{_InvalidPassword}]} ->
+        Password /= "";
+    {selected, ["auth_token"], [{_Invalid}]} ->
       ?INFO_MSG("Invalid password specified for user ~p", [Username]),
         false; %% Password is not correct
-    {selected, ["password"], []} ->
+    {selected, ["auth_token"], []} ->
         ?INFO_MSG("No account exists with username ~p", [Username]),
         false; %% Account does not exist
     {error, _Error} ->
@@ -71,9 +68,6 @@ check_password(User, Server, Password) ->
         false %% Typical error is database not accessible
       end
     end.
-
-password_digest(Password) ->
-  Password.
 
 %% @spec (User, Server, Password, Digest, DigestGen) -> true | false | {error, Error}
 check_password(User, Server, Password, _Digest, _DigestGen) ->
@@ -86,7 +80,7 @@ set_password(_User, _Server, _Password) ->
 
 %% @spec (User, Server, Password) -> {atomic, ok} | {atomic, exists} | {error, invalid_jid}
 try_register(_User, _Server, _Password) ->
-  {error, invalid_jid}. %% figure out how to return a better error response
+  {error, not_allowed}. %% figure out how to return a better error response
 
 dirty_get_registered_users() ->
   [].
@@ -117,10 +111,10 @@ is_user_exists(User, Server) ->
   LUser ->
       Username = ejabberd_odbc:escape(LUser),
       LServer = jlib:nameprep(Server),
-      try odbc_queries:get_password(LServer, Username) of
-    {selected, ["password"], [{_Password}]} ->
+      try harbor_odbc_queries:get_auth_token(LServer, Username) of
+    {selected, ["auth_token"], [{_Anything}]} ->
         true; %% Account exists
-    {selected, ["password"], []} ->
+    {selected, ["auth_token"], []} ->
         false; %% Account does not exist
     {error, Error} ->
         {error, Error} %% Typical error is that table doesn't exist
@@ -134,9 +128,9 @@ is_user_exists(User, Server) ->
 %% @doc Remove user.
 %% Note: it may return ok even if there was some problem removing the user.
 remove_user(_User, _Server) ->
-  error.
+  {error, not_allowed}.
 
 %% @spec (User, Server, Password) -> ok | error | not_exists | not_allowed
 %% @doc Remove user if the provided password is correct.
 remove_user(_User, _Server, _Password) ->
-  error.
+  not_allowed.
