@@ -14,16 +14,11 @@
   user_available/1,
   unset_presence/4,
   list_groups/1,
-  create_group/2,
-  create_group/3,
-  delete_group/2,
   get_group_opts/2,
   set_group_opts/3,
   get_group_users/2,
   get_group_explicit_users/2,
-  is_user_in_group/3,
-  add_user_to_group/3,
-  remove_user_from_group/3]).
+  is_user_in_group/3]).
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").
@@ -371,54 +366,6 @@ groups_with_opts(Host, odbc) ->
             []
     end.
 
-create_group(Host, Group) ->
-    create_group(Host, Group, []).
-
-create_group(Host, Group, Opts) ->
-    create_group(Host, Group, Opts, gen_mod:db_type(Host, ?MODULE)).
-
-create_group(Host, Group, Opts, mnesia) ->
-    R = #sr_group{group_host = {Group, Host}, opts = Opts},
-    F = fun() ->
-    mnesia:write(R)
-  end,
-    mnesia:transaction(F);
-create_group(Host, Group, Opts, odbc) ->
-    SGroup = ejabberd_odbc:escape(Group),
-    SOpts = ejabberd_odbc:encode_term(Opts),
-    F = fun() ->
-                odbc_queries:update_t("sr_group",
-                                      ["name", "opts"],
-                                      [SGroup, SOpts],
-                                      ["name='", SGroup, "'"])
-        end,
-    ejabberd_odbc:sql_transaction(Host, F).
-
-delete_group(Host, Group) ->
-    delete_group(Host, Group, gen_mod:db_type(Host, ?MODULE)).
-
-delete_group(Host, Group, mnesia) ->
-    GroupHost = {Group, Host},
-    F = fun() ->
-    %% Delete the group ...
-    mnesia:delete({sr_group, GroupHost}),
-    %% ... and its users
-    Users = mnesia:index_read(sr_user, GroupHost, #sr_user.group_host),
-    lists:foreach(fun(UserEntry) ->
-              mnesia:delete_object(UserEntry)
-            end, Users)
-  end,
-    mnesia:transaction(F);
-delete_group(Host, Group, odbc) ->
-    SGroup = ejabberd_odbc:escape(Group),
-    F = fun() ->
-                ejabberd_odbc:sql_query_t(
-                  ["delete from sr_group where name='", SGroup, "';"]),
-                ejabberd_odbc:sql_query_t(
-                  ["delete from sr_user where grp='", SGroup, "';"])
-        end,
-    ejabberd_odbc:sql_transaction(Host, F).
-
 get_group_opts(Host, Group) ->
     get_group_opts(Host, Group, gen_mod:db_type(Host, ?MODULE)).
 
@@ -614,92 +561,11 @@ is_user_in_group(US, Group, Host, odbc) ->
             true
     end.
 
-%% @spec (Host::string(), {User::string(), Server::string()}, Group::string()) -> {atomic, ok}
-add_user_to_group(Host, US, Group) ->
-    {LUser, LServer} = US,
-    case ejabberd_regexp:run(LUser, "^@.+@$") of
-  match ->
-      GroupOpts = ?MODULE:get_group_opts(Host, Group),
-      MoreGroupOpts =
-    case LUser of
-        "@all@" -> [{all_users, true}];
-        "@online@" -> [{online_users, true}];
-        _ -> []
-    end,
-            ?MODULE:set_group_opts(
-        Host, Group,
-        GroupOpts ++ MoreGroupOpts);
-  nomatch ->
-      %% Push this new user to members of groups where this group is displayed
-      push_user_to_displayed(LUser, LServer, Group, Host, both),
-      %% Push members of groups that are displayed to this group
-      push_displayed_to_user(LUser, LServer, Group, Host, both),
-            add_user_to_group(Host, US, Group, gen_mod:db_type(Host, ?MODULE))
-    end.
-
-add_user_to_group(Host, US, Group, mnesia) ->
-    R = #sr_user{us = US, group_host = {Group, Host}},
-    F = fun() ->
-                mnesia:write(R)
-        end,
-    mnesia:transaction(F);
-add_user_to_group(Host, US, Group, odbc) ->
-    SJID = make_jid_s(US),
-    SGroup = ejabberd_odbc:escape(Group),
-    F = fun() ->
-                odbc_queries:update_t(
-                  "sr_user",
-                  ["jid", "grp"],
-                  [SJID, SGroup],
-                  ["jid='", SJID, "' and grp='", SGroup, "'"])
-        end,
-    ejabberd_odbc:sql_transaction(Host, F).
-
 push_displayed_to_user(LUser, LServer, Group, Host, Subscription) ->
     GroupsOpts = groups_with_opts(LServer),
     GroupOpts = proplists:get_value(Group, GroupsOpts, []),
     DisplayedGroups = proplists:get_value(displayed_groups, GroupOpts, []),
     [push_members_to_user(LUser, LServer, DGroup, Host, Subscription) || DGroup <- DisplayedGroups].
-
-remove_user_from_group(Host, US, Group) ->
-    {LUser, LServer} = US,
-    case ejabberd_regexp:run(LUser, "^@.+@$") of
-  match ->
-      GroupOpts = ?MODULE:get_group_opts(Host, Group),
-      NewGroupOpts =
-    case LUser of
-        "@all@" ->
-      lists:filter(fun(X) -> X/={all_users,true} end, GroupOpts);
-        "@online@" ->
-      lists:filter(fun(X) -> X/={online_users,true} end, GroupOpts)
-    end,
-      ?MODULE:set_group_opts(Host, Group, NewGroupOpts);
-  nomatch ->
-            Result = remove_user_from_group(Host, US, Group,
-                                            gen_mod:db_type(Host, ?MODULE)),
-      %% Push removal of the old user to members of groups where the group that this user was members was displayed
-      push_user_to_displayed(LUser, LServer, Group, Host, remove),
-      %% Push removal of members of groups that where displayed to the group which this user has left
-      push_displayed_to_user(LUser, LServer, Group, Host, remove),
-      Result
-    end.
-
-remove_user_from_group(Host, US, Group, mnesia) ->
-    R = #sr_user{us = US, group_host = {Group, Host}},
-    F = fun() ->
-                mnesia:delete_object(R)
-        end,
-    mnesia:transaction(F);
-remove_user_from_group(Host, US, Group, odbc) ->
-    SJID = make_jid_s(US),
-    SGroup = ejabberd_odbc:escape(Group),
-    F = fun() ->
-                ejabberd_odbc:sql_query_t(
-                  ["delete from sr_user where jid='",
-                   SJID, "' and grp='", SGroup, "';"]),
-                ok
-        end,
-    ejabberd_odbc:sql_transaction(Host, F).
 
 push_members_to_user(LUser, LServer, Group, Host, Subscription) ->
     GroupsOpts = groups_with_opts(LServer),
