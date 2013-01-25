@@ -7,8 +7,8 @@ EBINDIR=$(top_builddir)/ebin
 
 ERL=erl $(ERLCFLAGS) -pa ebin $(ERLFLAGS) -noshell -eval
 
-mod_ejabberd_harbor_FILES = ejabberd_auth_harbor.erl harbor_odbc_queries.erl auth_harbor_test.erl
-mod_ejabberd_harbor_BEAMS = ejabberd_auth_harbor.beam harbor_odbc_queries.beam auth_harbor_test.beam
+mod_ejabberd_harbor_FILES = ejabberd_auth_harbor.erl mod_shared_roster_harbor.erl harbor_odbc_queries.erl
+mod_ejabberd_harbor_BEAMS = ejabberd_auth_harbor.beam mod_shared_roster_harbor.beam harbor_odbc_queries.beam
 
 EXTRA_DIST = ${addprefix $(ESRCDIR)/, $(mod_ejabberd_harbor_FILES)}
 
