@@ -13,9 +13,7 @@
   out_subscription/4,
   list_groups/1,
   get_group_opts/2,
-  set_group_opts/3,
   get_group_users/2,
-  get_group_explicit_users/2,
   is_user_in_group/3]).
 
 -include("ejabberd.hrl").
@@ -334,17 +332,6 @@ get_group_opts(Host, Group) ->
       error
   end.
 
-set_group_opts(Host, Group, Opts) ->
-  SGroup = ejabberd_odbc:escape(Group),
-  SOpts = ejabberd_odbc:encode_term(Opts),
-  F = fun() ->
-      odbc_queries:update_t("sr_group",
-        ["name", "opts"],
-        [SGroup, SOpts],
-        ["name='", SGroup, "'"])
-  end,
-  ejabberd_odbc:sql_transaction(Host, F).
-
 get_user_groups(US) ->
     Host = element(2, US),
     SJID = make_jid_s(US),
@@ -360,15 +347,6 @@ get_user_groups(US) ->
 
     Groups.
 
-is_group_enabled(Host1, Group1) ->
-    {Host, Group} = split_grouphost(Host1, Group1),
-    case get_group_opts(Host, Group) of
-        error ->
-            false;
-        Opts ->
-            not lists:member(disabled, Opts)
-    end.
-
 %% @spec (Host::string(), Group::string(), Opt::atom(), Default) -> OptValue | Default
 get_group_opt(Host, Group, Opt, Default) ->
     case get_group_opts(Host, Group) of
@@ -383,27 +361,8 @@ get_group_opt(Host, Group, Opt, Default) ->
       end
     end.
 
-get_online_users(Host) ->
-    lists:usort([{U, S} || {U, S, _} <- ejabberd_sm:get_vh_session_list(Host)]).
-
 get_group_users(Host1, Group1) ->
-    {Host, Group} = split_grouphost(Host1, Group1),
-    case get_group_opt(Host, Group, all_users, false) of
-  true ->
-      ejabberd_auth:get_vh_registered_users(Host);
-  false ->
-      []
-    end ++
-    case get_group_opt(Host, Group, online_users, false) of
-  true ->
-      get_online_users(Host);
-  false ->
-      []
-    end ++
-    get_group_explicit_users(Host, Group).
-
-%% @spec (Host::string(), Group::string()) -> [{User::string(), Server::string()}]
-get_group_explicit_users(Host, Group) ->
+  {Host, Group} = split_grouphost(Host1, Group1),
   SGroup = ejabberd_odbc:escape(Group),
   case catch ejabberd_odbc:sql_query(
       Host, ["select jid from sr_user "
@@ -425,19 +384,12 @@ get_group_name(Host1, Group1) ->
 
 %% @doc Get the list of groups that are displayed to this user
 get_user_displayed_groups(US) ->
-    Host = element(2, US),
-    DisplayedGroups1 =
+  Host = element(2, US),
   lists:usort(
     lists:flatmap(
       fun(Group) ->
-        case is_group_enabled(Host, Group) of
-      true ->
-          get_group_opt(Host, Group, displayed_groups, []);
-      false ->
-          []
-        end
-      end, get_user_groups(US))),
-    [Group || Group <- DisplayedGroups1, is_group_enabled(Host, Group)].
+        get_group_opt(Host, Group, displayed_groups, [])
+      end, get_user_groups(US))).
 
 is_user_in_group(US, Group, Host) ->
     SJID = make_jid_s(US),
