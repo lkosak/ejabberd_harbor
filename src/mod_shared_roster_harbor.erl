@@ -11,8 +11,6 @@
   process_item/2,
   in_subscription/6,
   out_subscription/4,
-  list_groups/1,
-  get_group_opts/2,
   get_group_users/2,
   is_user_in_group/3]).
 
@@ -312,96 +310,59 @@ process_subscription(Direction, User, Server, JID, _Type, Acc) ->
       Acc
     end.
 
-list_groups(Host) ->
-  case ejabberd_odbc:sql_query(
-      Host, ["select name from sr_group;"]) of
-    {selected, ["name"], Rs} ->
-      [G || {G} <- Rs];
-    _ ->
-      []
-  end.
-
-get_group_opts(Host, Group) ->
-  SGroup = ejabberd_odbc:escape(Group),
-  case catch ejabberd_odbc:sql_query(
-      Host, ["select opts from sr_group "
-        "where name='", SGroup, "';"]) of
-    {selected, ["opts"], [{SOpts}]} ->
-      ejabberd_odbc:decode_term(SOpts);
-    _ ->
-      error
-  end.
-
-get_user_groups(US) ->
-    Host = element(2, US),
-    SJID = make_jid_s(US),
-
-    Groups = case catch ejabberd_odbc:sql_query(
-        Host, ["select grp from sr_user "
-          "where jid='", SJID, "';"]) of
-      {selected, ["grp"], Rs} ->
-        [G || {G} <- Rs];
-      _ ->
-        []
-    end,
-
-    Groups.
-
-%% @spec (Host::string(), Group::string(), Opt::atom(), Default) -> OptValue | Default
-get_group_opt(Host, Group, Opt, Default) ->
-    case get_group_opts(Host, Group) of
-        error ->
-            Default;
-        Opts ->
-      case lists:keysearch(Opt, 1, Opts) of
-    {value, {_, Val}} ->
-        Val;
-    false ->
-        Default
-      end
-    end.
-
 get_group_users(Host1, Group1) ->
   {Host, Group} = split_grouphost(Host1, Group1),
   SGroup = ejabberd_odbc:escape(Group),
   case catch ejabberd_odbc:sql_query(
-      Host, ["select jid from sr_user "
-        "where grp='", SGroup, "';"]) of
-    {selected, ["jid"], Rs} ->
+      Host, ["select username from user_organizations uo join users u "
+        "on uo.user_id=u.id where organization_id=", SGroup, ";"]) of
+    {selected, ["username"], Rs} ->
       lists:map(
-        fun({JID}) ->
-            {U, S, _} = jlib:jid_tolower(
-              jlib:string_to_jid(JID)),
-            {U, S}
+        fun({Username}) ->
+            {Username, Host}
         end, Rs);
     _ ->
       []
   end.
 
 get_group_name(Host1, Group1) ->
-    {Host, Group} = split_grouphost(Host1, Group1),
-    get_group_opt(Host, Group, name, Group).
+  {Host, Group} = split_grouphost(Host1, Group1),
+  SGroup = ejabberd_odbc:escape(Group),
+  case catch ejabberd_odbc:sql_query(
+      Host, ["select name from organizations "
+        "where id='", SGroup, "';"]) of
+    {selected, ["name"], [{Name}]} ->
+      Name;
+    _ ->
+      Group
+  end.
 
 %% @doc Get the list of groups that are displayed to this user
 get_user_displayed_groups(US) ->
   Host = element(2, US),
-  lists:usort(
-    lists:flatmap(
-      fun(Group) ->
-        get_group_opt(Host, Group, displayed_groups, [])
-      end, get_user_groups(US))).
+  Username = ejabberd_odbc:escape(element(1, US)),
+
+  case catch ejabberd_odbc:sql_query(
+      Host, ["select organization_id from user_organizations uo join users u "
+        "ON uo.user_id=u.id where username='", Username, "';"]) of
+    {selected, ["organization_id"], Rs} ->
+      [G || {G} <- Rs];
+    _ ->
+      []
+  end.
 
 is_user_in_group(US, Group, Host) ->
-    SJID = make_jid_s(US),
-    SGroup = ejabberd_odbc:escape(Group),
-    case catch ejabberd_odbc:sql_query(
-                 Host, ["select * from sr_user where "
-                        "jid='", SJID, "' and grp='", SGroup, "';"]) of
-        {selected, _, []} ->
-            lists:member(US, get_group_users(Host, Group));
-        _ ->
-            true
-    end.
+  Username = ejabberd_odbc:escape(element(1, US)),
+  SGroup = ejabberd_odbc:escape(Group),
+  case catch ejabberd_odbc:sql_query(
+      Host, ["select count(*) from user_organizations uo JOIN users u "
+        "ON uo.user_id=u.id WHERE username='",Username,"' "
+        "AND organization_id=",SGroup,";"]) of
+    {selected, _, [{"1"}]} ->
+      true;
+    _ ->
+      false
+  end.
 
 item_to_xml(Item) ->
     Attrs1 = [{"jid", jlib:jid_to_string(Item#roster.jid)}],
@@ -448,12 +409,3 @@ split_grouphost(Host, Group) ->
   [_] ->
       {Host, Group}
     end.
-
-make_jid_s(U, S) ->
-    ejabberd_odbc:escape(
-      jlib:jid_to_string(
-        jlib:jid_tolower(
-          jlib:make_jid(U, S, "")))).
-
-make_jid_s({U, S}) ->
-    make_jid_s(U, S).
