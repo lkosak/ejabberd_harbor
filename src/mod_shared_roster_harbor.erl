@@ -11,8 +11,6 @@
   process_item/2,
   in_subscription/6,
   out_subscription/4,
-  user_available/1,
-  unset_presence/4,
   list_groups/1,
   get_group_opts/2,
   set_group_opts/3,
@@ -38,11 +36,7 @@ start(Host, _Opts) ->
   ejabberd_hooks:add(roster_get_jid_info, Host,
     ?MODULE, get_jid_info, 70),
   ejabberd_hooks:add(roster_process_item, Host,
-    ?MODULE, process_item, 50),
-  ejabberd_hooks:add(user_available_hook, Host,
-    ?MODULE, user_available, 50),
-  ejabberd_hooks:add(unset_presence_hook, Host,
-    ?MODULE, unset_presence, 50).
+    ?MODULE, process_item, 50).
 
 stop(Host) ->
   ejabberd_hooks:delete(roster_get, Host,
@@ -56,11 +50,7 @@ stop(Host) ->
   ejabberd_hooks:delete(roster_get_jid_info, Host,
     ?MODULE, get_jid_info, 70),
   ejabberd_hooks:delete(roster_process_item, Host,
-    ?MODULE, process_item, 50),
-  ejabberd_hooks:delete(user_available_hook, Host,
-    ?MODULE, user_available, 50),
-  ejabberd_hooks:delete(unset_presence_hook, Host,
-    ?MODULE, unset_presence, 50).
+    ?MODULE, process_item, 50).
 
 get_user_roster(Items, US) ->
     {U, S} = US,
@@ -242,7 +232,6 @@ set_item(User, Server, Resource, Item) ->
       jlib:make_jid("", Server, ""),
       jlib:iq_to_xml(ResIQ)).
 
-
 get_subscription_lists({F, T}, User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
@@ -334,15 +323,6 @@ list_groups(Host) ->
       []
   end.
 
-groups_with_opts(Host) ->
-  case ejabberd_odbc:sql_query(
-      Host, ["select name, opts from sr_group;"]) of
-    {selected, ["name", "opts"], Rs} ->
-      [{G, ejabberd_odbc:decode_term(Opts)} || {G, Opts} <- Rs];
-    _ ->
-      []
-  end.
-
 get_group_opts(Host, Group) ->
   SGroup = ejabberd_odbc:escape(Group),
   case catch ejabberd_odbc:sql_query(
@@ -378,7 +358,7 @@ get_user_groups(US) ->
         []
     end,
 
-    Groups ++ get_special_users_groups(Host).
+    Groups.
 
 is_group_enabled(Host1, Group1) ->
     {Host, Group} = split_grouphost(Host1, Group1),
@@ -443,23 +423,6 @@ get_group_name(Host1, Group1) ->
     {Host, Group} = split_grouphost(Host1, Group1),
     get_group_opt(Host, Group, name, Group).
 
-%% Get list of names of groups that have @all@/@online@/etc in the memberlist
-get_special_users_groups(Host) ->
-    lists:filter(
-      fun(Group) ->
-        get_group_opt(Host, Group, all_users, false)
-      orelse get_group_opt(Host, Group, online_users, false)
-      end,
-      list_groups(Host)).
-
-%% Get list of names of groups that have @online@ in the memberlist
-get_special_users_groups_online(Host) ->
-    lists:filter(
-      fun(Group) ->
-        get_group_opt(Host, Group, online_users, false)
-      end,
-      list_groups(Host)).
-
 %% @doc Get the list of groups that are displayed to this user
 get_user_displayed_groups(US) ->
     Host = element(2, US),
@@ -487,76 +450,6 @@ is_user_in_group(US, Group, Host) ->
         _ ->
             true
     end.
-
-push_displayed_to_user(LUser, LServer, Group, Host, Subscription) ->
-    GroupsOpts = groups_with_opts(LServer),
-    GroupOpts = proplists:get_value(Group, GroupsOpts, []),
-    DisplayedGroups = proplists:get_value(displayed_groups, GroupOpts, []),
-    [push_members_to_user(LUser, LServer, DGroup, Host, Subscription) || DGroup <- DisplayedGroups].
-
-push_members_to_user(LUser, LServer, Group, Host, Subscription) ->
-    GroupsOpts = groups_with_opts(LServer),
-    GroupOpts = proplists:get_value(Group, GroupsOpts, []),
-    GroupName = proplists:get_value(name, GroupOpts, Group),
-    Members = get_group_users(Host, Group),
-    lists:foreach(
-      fun({U, S}) ->
-        push_roster_item(LUser, LServer, U, S, GroupName, Subscription)
-      end, Members).
-
-push_user_to_displayed(LUser, LServer, Group, Host, Subscription) ->
-    GroupsOpts = groups_with_opts(Host),
-    GroupOpts = proplists:get_value(Group, GroupsOpts, []),
-    GroupName = proplists:get_value(name, GroupOpts, Group),
-    DisplayedToGroupsOpts = displayed_to_groups(Group, Host),
-    [push_user_to_group(LUser, LServer, GroupD, Host, GroupName, Subscription) || {GroupD, _Opts} <- DisplayedToGroupsOpts].
-
-push_user_to_group(LUser, LServer, Group, Host, GroupName, Subscription) ->
-    lists:foreach(
-      fun({U, S})  when (U == LUser) and (S == LServer) -> ok;
-         ({U, S}) ->
-        push_roster_item(U, S, LUser, LServer, GroupName, Subscription)
-      end, get_group_users(Host, Group)).
-
-%% Get list of groups to which this group is displayed
-displayed_to_groups(GroupName, LServer) ->
-    GroupsOpts = groups_with_opts(LServer),
-    lists:filter(
-      fun({_Group, Opts}) ->
-        lists:member(GroupName, proplists:get_value(displayed_groups, Opts, []))
-      end, GroupsOpts).
-
-push_item(User, Server, From, Item) ->
-    %% It was
-    %%  ejabberd_sm:route(jlib:make_jid("", "", ""),
-    %%                    jlib:make_jid(User, Server, "")
-    %% why?
-    ejabberd_sm:route(From, jlib:make_jid(User, Server, ""),
-          {xmlelement, "broadcast", [],
-           [{item,
-       Item#roster.jid,
-       Item#roster.subscription}]}),
-    Stanza = jlib:iq_to_xml(
-         #iq{type = set, xmlns = ?NS_ROSTER,
-       id = "push" ++ randoms:get_string(),
-       sub_el = [{xmlelement, "query",
-            [{"xmlns", ?NS_ROSTER}],
-            [item_to_xml(Item)]}]}),
-    lists:foreach(
-      fun(Resource) ->
-        JID = jlib:make_jid(User, Server, Resource),
-        ejabberd_router:route(JID, JID, Stanza)
-      end, ejabberd_sm:get_user_resources(User, Server)).
-
-push_roster_item(User, Server, ContactU, ContactS, GroupName, Subscription) ->
-    Item = #roster{usj = {User, Server, {ContactU, ContactS, ""}},
-       us = {User, Server},
-       jid = {ContactU, ContactS, ""},
-       name = "",
-       subscription = Subscription,
-       ask = none,
-       groups = [GroupName]},
-    push_item(User, Server, jlib:make_jid("", Server, ""), Item).
 
 item_to_xml(Item) ->
     Attrs1 = [{"jid", jlib:jid_to_string(Item#roster.jid)}],
@@ -595,52 +488,6 @@ item_to_xml(Item) ->
 ask_to_pending(subscribe) -> out;
 ask_to_pending(unsubscribe) -> none;
 ask_to_pending(Ask) -> Ask.
-
-user_available(New) ->
-    LUser = New#jid.luser,
-    LServer = New#jid.lserver,
-    Resources = ejabberd_sm:get_user_resources(LUser, LServer),
-    ?DEBUG("user_available for ~p @ ~p (~p resources)",
-     [LUser, LServer, length(Resources)]),
-    case length(Resources) of
-  %% first session for this user
-  1 ->
-      %% This is a simplification - we ignore he 'display'
-      %% property - @online@ is always reflective.
-      OnlineGroups = get_special_users_groups_online(LServer),
-      lists:foreach(
-        fun(OG) ->
-          ?DEBUG("user_available: pushing  ~p @ ~p grp ~p",
-           [LUser, LServer, OG ]),
-          push_user_to_displayed(LUser, LServer, OG, LServer, both)
-        end, OnlineGroups);
-  _ ->
-      ok
-    end.
-
-unset_presence(LUser, LServer, Resource, Status) ->
-    Resources = ejabberd_sm:get_user_resources(LUser, LServer),
-    ?DEBUG("unset_presence for ~p @ ~p / ~p -> ~p (~p resources)",
-     [LUser, LServer, Resource, Status, length(Resources)]),
-    %% if user has no resources left...
-    case length(Resources) of
-  0 ->
-      %% This is a simplification - we ignore he 'display'
-      %% property - @online@ is always reflective.
-      OnlineGroups = get_special_users_groups_online(LServer),
-      %% for each of these groups...
-      lists:foreach(
-        fun(OG) ->
-          %% Push removal of the old user to members of groups
-          %% where the group that this uwas members was displayed
-          push_user_to_displayed(LUser, LServer, OG, LServer, remove),
-          %% Push removal of members of groups that where
-          %% displayed to the group which thiuser has left
-          push_displayed_to_user(LUser, LServer, OG, LServer,remove)
-        end, OnlineGroups);
-  _ ->
-      ok
-    end.
 
 split_grouphost(Host, Group) ->
     case string:tokens(Group, "@") of
