@@ -27,7 +27,6 @@
 
 -record(muc_room, {name_host, opts}).
 -record(muc_online_room, {name_host, pid}).
--record(muc_registered, {us_host, nick}).
 
 -record(state, {host,
 		server_host,
@@ -165,21 +164,6 @@ can_use_nick(ServerHost, Host, JID, Nick) ->
 %%--------------------------------------------------------------------
 init([Host, Opts]) ->
     MyHost = gen_mod:get_opt_host(Host, Opts, "conference.@HOST@"),
-    case gen_mod:db_type(Opts) of
-        mnesia ->
-            mnesia:create_table(muc_room,
-                                [{disc_copies, [node()]},
-                                 {attributes,
-                                  record_info(fields, muc_room)}]),
-            mnesia:create_table(muc_registered,
-                                [{disc_copies, [node()]},
-                                 {attributes,
-                                  record_info(fields, muc_registered)}]),
-            update_tables(MyHost),
-            mnesia:add_table_index(muc_registered, nick);
-        _ ->
-            ok
-    end,
     mnesia:create_table(muc_online_room,
 			[{ram_copies, [node()]},
 			 {attributes, record_info(fields, muc_online_room)}]),
@@ -875,91 +859,3 @@ clean_table_from_bad_node(Node, Host) ->
 			      end, Es)
         end,
     mnesia:async_dirty(F).
-
-update_tables(Host) ->
-    update_muc_room_table(Host),
-    update_muc_registered_table(Host).
-
-update_muc_room_table(Host) ->
-    Fields = record_info(fields, muc_room),
-    case mnesia:table_info(muc_room, attributes) of
-	Fields ->
-	    ok;
-	[name, opts] ->
-	    ?INFO_MSG("Converting muc_room table from "
-		      "{name, opts} format", []),
-	    {atomic, ok} = mnesia:create_table(
-			     mod_muc_harbor_tmp_table,
-			     [{disc_only_copies, [node()]},
-			      {type, bag},
-			      {local_content, true},
-			      {record_name, muc_room},
-			      {attributes, record_info(fields, muc_room)}]),
-	    mnesia:transform_table(muc_room, ignore, Fields),
-	    F1 = fun() ->
-			 mnesia:write_lock_table(mod_muc_harbor_tmp_table),
-			 mnesia:foldl(
-			   fun(#muc_room{name_host = Name} = R, _) ->
-				   mnesia:dirty_write(
-				     mod_muc_harbor_tmp_table,
-				     R#muc_room{name_host = {Name, Host}})
-			   end, ok, muc_room)
-		 end,
-	    mnesia:transaction(F1),
-	    mnesia:clear_table(muc_room),
-	    F2 = fun() ->
-			 mnesia:write_lock_table(muc_room),
-			 mnesia:foldl(
-			   fun(R, _) ->
-				   mnesia:dirty_write(R)
-			   end, ok, mod_muc_harbor_tmp_table)
-		 end,
-	    mnesia:transaction(F2),
-	    mnesia:delete_table(mod_muc_harbor_tmp_table);
-	_ ->
-	    ?INFO_MSG("Recreating muc_room table", []),
-	    mnesia:transform_table(muc_room, ignore, Fields)
-    end.
-
-
-update_muc_registered_table(Host) ->
-    Fields = record_info(fields, muc_registered),
-    case mnesia:table_info(muc_registered, attributes) of
-	Fields ->
-	    ok;
-	[user, nick] ->
-	    ?INFO_MSG("Converting muc_registered table from "
-		      "{user, nick} format", []),
-	    {atomic, ok} = mnesia:create_table(
-			     mod_muc_harbor_tmp_table,
-			     [{disc_only_copies, [node()]},
-			      {type, bag},
-			      {local_content, true},
-			      {record_name, muc_registered},
-			      {attributes, record_info(fields, muc_registered)}]),
-	    mnesia:del_table_index(muc_registered, nick),
-	    mnesia:transform_table(muc_registered, ignore, Fields),
-	    F1 = fun() ->
-			 mnesia:write_lock_table(mod_muc_harbor_tmp_table),
-			 mnesia:foldl(
-			   fun(#muc_registered{us_host = US} = R, _) ->
-				   mnesia:dirty_write(
-				     mod_muc_harbor_tmp_table,
-				     R#muc_registered{us_host = {US, Host}})
-			   end, ok, muc_registered)
-		 end,
-	    mnesia:transaction(F1),
-	    mnesia:clear_table(muc_registered),
-	    F2 = fun() ->
-			 mnesia:write_lock_table(muc_registered),
-			 mnesia:foldl(
-			   fun(R, _) ->
-				   mnesia:dirty_write(R)
-			   end, ok, mod_muc_harbor_tmp_table)
-		 end,
-	    mnesia:transaction(F2),
-	    mnesia:delete_table(mod_muc_harbor_tmp_table);
-	_ ->
-	    ?INFO_MSG("Recreating muc_registered table", []),
-	    mnesia:transform_table(muc_registered, ignore, Fields)
-    end.
