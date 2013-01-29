@@ -1,0 +1,43 @@
+ERLC=@ERLC@
+ERL=@ERL@
+ERLCFLAGS=@ERLCFLAGS@
+
+SRCDIR = src
+SUBDIRS = $(SRCDIR)/mod_muc_harbor
+
+EJABBERD_PREFIX=@EJABBERD_PREFIX@
+
+.SUFFIXES: .beam .erl
+
+.erl.beam:
+	$(ERLC) $(ERLCFLAGS) -b beam -o $(SRCDIR) $<
+
+SOURCES = $(wildcard $(SRCDIR)/*.erl)
+
+all: $(SOURCES:.erl=.beam) all-recursive
+
+clean: clean-recursive clean-local
+
+clean-local:
+	rm -f $(SRCDIR)/*.beam
+
+distclean: distclean-recursive clean-local
+	rm -rf autom4te.cache
+	rm -f config.status
+	rm -f config.log
+	rm -f Makefile
+	[ ! -f ../ChangeLog ] || rm -f ../ChangeLog
+
+all-recursive install-recursive uninstall-recursive \
+clean-recursive distclean-recursive \
+mostlyclean-recursive maintainer-clean-recursive:
+	@subdirs="$(SUBDIRS)"; for subdir in $$subdirs; do \
+	target=`echo $@|sed 's,-recursive,,'`; \
+	echo making $$target in $$subdir; \
+	(cd $$subdir && $(MAKE) $$target) || exit 1; \
+	done
+
+install: all
+	cp $(SRCDIR)/*.beam @prefix@/lib/ejabberd/ebin
+
+.PHONY: all clean distclean install

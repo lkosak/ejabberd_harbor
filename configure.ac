@@ -17,5 +17,5 @@ ERL_CHECK_MODULE(gen_mod, [],
 		 [AC_MSG_ERROR([gen_mod module is required.  Make sure PREFIX is the same as the PREFIX at which ejabberd is installed.])])
 
 AC_SUBST(ERLCFLAGS)
-AC_CONFIG_FILES([Makefile src/mod_muc/Makefile])
+AC_CONFIG_FILES([Makefile src/mod_muc_harbor/Makefile])
 AC_OUTPUT

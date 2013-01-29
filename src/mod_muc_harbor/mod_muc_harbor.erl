@@ -230,7 +230,7 @@ handle_call({create, Room, From, Nick, Opts},
 		  default -> DefOpts;
 		  _ -> Opts
 	      end,
-    {ok, Pid} = mod_muc_room:start(
+    {ok, Pid} = mod_muc_room_harbor:start(
 		  Host, ServerHost, Access,
 		  Room, HistorySize,
 		  RoomShaper, From,
@@ -307,7 +307,7 @@ start_supervisor(Host) ->
     ChildSpec =
 	{Proc,
 	 {ejabberd_tmp_sup, start_link,
-	  [Proc, mod_muc_room]},
+	  [Proc, mod_muc_room_harbor]},
 	 permanent,
 	 infinity,
 	 supervisor,
@@ -483,7 +483,7 @@ do_route1(Host, ServerHost, Access, HistorySize, RoomShaper,
 						  RoomShaper, From,
 						  Nick, DefRoomOpts),
 				    register_room(Host, Room, Pid),
-				    mod_muc_room:route(Pid, From, Nick, Packet),
+				    mod_muc_room_harbor:route(Pid, From, Nick, Packet),
 				    ok;
 				false ->
 				    Lang = xml:get_attr_s("xml:lang", Attrs),
@@ -502,7 +502,7 @@ do_route1(Host, ServerHost, Access, HistorySize, RoomShaper,
 		[R] ->
 		    Pid = R#muc_online_room.pid,
 		    ?DEBUG("MUC: send to process ~p~n", [Pid]),
-		    mod_muc_room:route(Pid, From, Nick, Packet),
+		    mod_muc_room_harbor:route(Pid, From, Nick, Packet),
 		    ok
 	    end
     end.
@@ -539,7 +539,7 @@ load_permanent_rooms(Host, ServerHost, Access, HistorySize, RoomShaper) ->
               {Room, Host} = R#muc_room.name_host,
               case mnesia:dirty_read(muc_online_room, {Room, Host}) of
                   [] ->
-                      {ok, Pid} = mod_muc_room:start(
+                      {ok, Pid} = mod_muc_room_harbor:start(
                                     Host,
                                     ServerHost,
                                     Access,
@@ -559,13 +559,13 @@ start_new_room(Host, ServerHost, Access, Room,
     case restore_room(ServerHost, Room, Host) of
         error ->
 	    ?DEBUG("MUC: open new room '~s'~n", [Room]),
-	    mod_muc_room:start(Host, ServerHost, Access,
+	    mod_muc_room_harbor:start(Host, ServerHost, Access,
 			       Room, HistorySize,
 			       RoomShaper, From,
 			       Nick, DefRoomOpts);
         Opts ->
 	    ?DEBUG("MUC: restore room '~s'~n", [Room]),
-	    mod_muc_room:start(Host, ServerHost, Access,
+	    mod_muc_room_harbor:start(Host, ServerHost, Access,
 			       Room, HistorySize,
 			       RoomShaper, Opts)
     end.
